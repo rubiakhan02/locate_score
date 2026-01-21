@@ -11,6 +11,7 @@ const App: React.FC = () => {
   const [activeSector, setActiveSector] = useState<SectorData | null>(null);
   const [showResults, setShowResults] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   const suggestRef = useRef<HTMLDivElement>(null);
@@ -32,6 +33,65 @@ const App: React.FC = () => {
     );
   }, [sectorInput]);
 
+  // Utility to fetch landmarks from OpenStreetMap Nominatim
+  const fetchLocalLandmarks = async (sectorName: string): Promise<InfrastructureItem[]> => {
+    try {
+      // Query specific categories in Noida Sector context
+      const query = `landmarks and metro stations near ${sectorName}, Noida, Uttar Pradesh`;
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&limit=30`;
+      
+      const response = await fetch(url, {
+        headers: { 'Accept-Language': 'en' }
+      });
+      const data = await response.json();
+
+      const famousKeywords = [
+        { key: 'hospital', category: 'Hospital', icon: '🏥' },
+        { key: 'medical', category: 'Hospital', icon: '🏥' },
+        { key: 'mall', category: 'Mall', icon: '🛍️' },
+        { key: 'shopping', category: 'Mall', icon: '🛍️' },
+        { key: 'school', category: 'Education', icon: '🏫' },
+        { key: 'college', category: 'Education', icon: '🏫' },
+        { key: 'university', category: 'Education', icon: '🏫' },
+        { key: 'institute', category: 'Education', icon: '🏫' },
+        { key: 'metro', category: 'Metro & Connectivity', icon: '🚇' },
+        { key: 'subway', category: 'Metro & Connectivity', icon: '🚇' },
+        { key: 'station', category: 'Metro & Connectivity', icon: '🚇' },
+      ];
+
+      const landmarks: InfrastructureItem[] = data
+        .map((item: any) => {
+          const displayName = item.display_name.toLowerCase();
+          const match = famousKeywords.find(f => displayName.includes(f.key));
+          
+          if (match) {
+            // Check if it's a metro and if we can extract "Blue Line" or "Aqua Line" from address
+            let extraInfo = `${sectorName} Region`;
+            if (match.category === 'Metro & Connectivity') {
+                if (displayName.includes('blue line')) extraInfo = 'Delhi Metro Blue Line';
+                else if (displayName.includes('aqua line')) extraInfo = 'Noida Metro Aqua Line';
+                else if (item.address?.suburb) extraInfo = `${item.address.suburb} Connectivity`;
+            }
+
+            return {
+              name: item.display_name.split(',')[0],
+              category: match.category,
+              importance: extraInfo,
+              icon: match.icon
+            };
+          }
+          return null;
+        })
+        .filter(Boolean)
+        .slice(0, 10); 
+
+      return landmarks;
+    } catch (err) {
+      console.error("Failed to fetch landmarks:", err);
+      return [];
+    }
+  };
+
   const generateMockSector = (name: string): SectorData => ({
     id: `custom-${Date.now()}`,
     name: name,
@@ -45,15 +105,10 @@ const App: React.FC = () => {
       retail: 50,
       employment: 65,
     },
-    infrastructure: [
-      { name: 'Local Public Transit', category: 'Metro & Transport', importance: 'Regional bus and auto-rickshaw network', icon: '🚌' },
-      { name: 'Neighborhood Clinic', category: 'Healthcare', importance: 'Local primary care facilities', icon: '🏥' },
-      { name: 'Community Park', category: 'Lifestyle & Daily Needs', importance: 'Essential green space for recreation', icon: '🌳' },
-      { name: 'Jewar Airport Access', category: 'Airport Access', importance: 'Future connectivity via upcoming link roads', icon: '✈️' },
-    ]
+    infrastructure: [] 
   });
 
-  const handleGenerate = (sector?: SectorData) => {
+  const handleGenerate = async (sector?: SectorData) => {
     setError(null);
     if (!cityInput.trim()) {
       setError("Please enter city name");
@@ -64,26 +119,37 @@ const App: React.FC = () => {
       return;
     }
 
+    setIsLoading(true);
     let target: SectorData;
+
     if (sector) {
-      target = sector;
+      target = { ...sector };
     } else {
       const exactMatch = NOIDA_SECTORS.find(s => s.name.toLowerCase() === sectorInput.toLowerCase());
       if (exactMatch) {
-        target = exactMatch;
-      } else if (filteredSuggestions.length > 0) {
-        target = filteredSuggestions[0];
+        target = { ...exactMatch };
       } else {
         target = generateMockSector(sectorInput);
-        setError("Demo data not available, using nearest locality estimates");
-        setTimeout(() => setError(null), 4000);
       }
+    }
+
+    const apiLandmarks = await fetchLocalLandmarks(target.name);
+    
+    if (apiLandmarks.length > 0) {
+      target.infrastructure = apiLandmarks;
+    } else if (target.infrastructure.length === 0) {
+      target.infrastructure = [
+        { name: 'Local Public Transit', category: 'Connectivity', importance: `${target.name} Hub`, icon: '🚇' },
+        { name: 'Regional Healthcare Centre', category: 'Hospital', importance: `${target.name} Area`, icon: '🏥' },
+        { name: 'Primary Educational Institute', category: 'Education', icon: '🏫' }
+      ];
     }
 
     setActiveSector(target);
     setShowResults(true);
     setSectorInput(target.name);
     setIsSuggesting(false);
+    setIsLoading(false);
     
     setTimeout(() => {
       document.getElementById('results')?.scrollIntoView({ behavior: 'smooth' });
@@ -112,7 +178,7 @@ const App: React.FC = () => {
               Smart Location Intelligence for <span className="text-emerald-600">My Property Fact</span>
             </h1>
             <p className="text-lg text-slate-600 mb-12 leading-relaxed">
-              Analyze infrastructure, transit, and growth potential with a professional data-driven report.
+              Analyze real-time landmarks and infrastructure for Noida sectors using Nominatim Intelligence.
             </p>
 
             {/* Input Section */}
@@ -143,12 +209,12 @@ const App: React.FC = () => {
                     onChange={(e) => { setSectorInput(e.target.value); setIsSuggesting(true); }}
                     onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
                   />
-                  <label htmlFor="sector" className="absolute left-5 top-2 text-[10px] font-bold text-emerald-600 uppercase tracking-widest transition-all peer-placeholder-shown:text-slate-400 peer-placeholder-shown:text-sm peer-placeholder-shown:top-4 peer-focus:top-2 peer-focus:text-[10px]">Sector / Locality</label>
+                  <label htmlFor="sector" className="absolute left-5 top-2 text-[10px] font-bold text-emerald-600 uppercase tracking-widest transition-all peer-placeholder-shown:text-slate-400 peer-placeholder-shown:text-sm peer-placeholder-shown:top-4 peer-focus:top-2 peer-focus:text-[10px]">Sector / Locality (e.g. Sector 62)</label>
 
                   {isSuggesting && filteredSuggestions.length > 0 && (
                     <div className="absolute top-full left-0 right-0 mt-3 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
                       <div className="px-4 py-2 bg-slate-50 border-b border-slate-100">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Suggestions</span>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Noida Sectors</span>
                       </div>
                       {filteredSuggestions.map(s => (
                         <button key={s.id} className="w-full text-left px-5 py-3.5 hover:bg-emerald-50 transition flex items-center justify-between group" onClick={() => handleGenerate(s)}>
@@ -160,9 +226,22 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                <button className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold hover:bg-emerald-700 transition shadow-xl shadow-emerald-200 flex items-center justify-center gap-2 group min-w-[200px]" onClick={() => handleGenerate()}>
-                  Generate Report
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                <button 
+                  disabled={isLoading}
+                  className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold hover:bg-emerald-700 transition shadow-xl shadow-emerald-200 flex items-center justify-center gap-2 group min-w-[200px] disabled:opacity-70" 
+                  onClick={() => handleGenerate()}
+                >
+                  {isLoading ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      Analyzing...
+                    </span>
+                  ) : (
+                    <>
+                      Generate Report
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -176,13 +255,9 @@ const App: React.FC = () => {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-6">
               <div>
-                <span className="text-emerald-600 font-bold tracking-widest uppercase text-sm">Location Intelligence: {cityInput}</span>
+                <span className="text-emerald-600 font-bold tracking-widest uppercase text-sm">Locality Analysis: {cityInput}</span>
                 <h2 className="text-4xl font-bold text-slate-900 mt-2">{activeSector.name}</h2>
               </div>
-              <button className="bg-white px-6 py-3 rounded-2xl border border-slate-200 shadow-sm font-bold text-slate-600 flex items-center gap-2 hover:bg-slate-50 transition">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                Export PDF Analysis
-              </button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
@@ -219,38 +294,51 @@ const App: React.FC = () => {
                      <span className="text-3xl">📝</span> Analysis Summary
                    </h3>
                    <p className="text-slate-600 text-lg leading-relaxed">{activeSector.summary}</p>
-                   <div className="mt-6 pt-6 border-t border-slate-100">
-                      <p className="text-sm font-semibold text-emerald-700 italic">"Why this location? This locality stands out for its {activeSector.breakdown.connectivity > 90 ? 'superior transit networks' : 'balanced residential environment'}, making it a {activeSector.overallScore > 85 ? 'top-tier' : 'stable'} choice for living and investment."</p>
-                   </div>
+                   <p className="mt-4 text-xs text-slate-400">Connectivity and landmark data fetched from Nominatim Intelligence Engine.</p>
                 </div>
 
                 {/* Qualitative Infrastructure Section */}
                 <div className="space-y-8">
                   <h3 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
                     <span className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">🏢</span>
-                    Detailed Infrastructure & Landmarks
+                    Famous & Important Landmarks
                   </h3>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {Object.entries(groupedInfra).map(([category, items]: [string, InfrastructureItem[]]) => (
-                      <div key={category} className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-                        <h4 className="font-black text-xs uppercase tracking-[0.2em] text-emerald-600 mb-6 flex items-center gap-2">
-                          <span className="text-xl">{items[0].icon}</span> {category}
-                        </h4>
-                        <ul className="space-y-6">
-                          {items.map((item, idx) => (
-                            <li key={idx} className="group">
-                              <div className="flex flex-col">
-                                <span className="font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">{item.name}</span>
-                                {item.importance && (
-                                  <span className="text-sm text-slate-500 mt-1 leading-snug">{item.importance}</span>
-                                )}
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
+                    {Object.entries(groupedInfra).length > 0 ? (
+                      Object.entries(groupedInfra).map(([category, items]: [string, InfrastructureItem[]]) => (
+                        <div key={category} className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+                          <h4 className="font-black text-xs uppercase tracking-[0.2em] text-emerald-600 mb-6 flex items-center gap-2">
+                            <span className="text-xl">{items[0].icon}</span> {category}
+                          </h4>
+                          <ul className="space-y-6">
+                            {items.map((item, idx) => (
+                              <li key={idx} className="group">
+                                <div className="flex flex-col">
+                                  <span className="font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">{item.name}</span>
+                                  {/* Transit / Line Information Display */}
+                                  <div className="flex flex-col gap-1 mt-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter">{category}</span>
+                                      <span className="text-[10px] text-slate-400 font-medium">Near {activeSector.name}</span>
+                                    </div>
+                                    {item.importance && (
+                                      <span className="text-[10px] text-emerald-600 font-bold tracking-tight italic">
+                                        {item.importance}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="col-span-full p-12 bg-white rounded-3xl border border-dashed border-slate-200 text-center">
+                        <p className="text-slate-400 italic">No specific famous landmarks found via API for this exact locality. Try Sector 18 or Sector 62.</p>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 
@@ -260,7 +348,7 @@ const App: React.FC = () => {
                   <div className="relative z-10 text-center px-4">
                     <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl border border-emerald-500/20 group-hover:scale-110 transition-transform">📍</div>
                     <h4 className="text-xl font-bold text-slate-900 mb-1">POI Visual Explorer</h4>
-                    <p className="text-slate-500 text-sm">Interactive map view showing landmarks mentioned above.</p>
+                    <p className="text-slate-500 text-sm">Map visualization of {activeSector.name} landmarks.</p>
                   </div>
                 </div>
               </div>
@@ -276,9 +364,9 @@ const App: React.FC = () => {
           <h2 className="text-4xl font-bold text-slate-900 mt-4 mb-20">How we analyze locations</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-16">
             {[
-              { title: 'Locality Input', desc: 'Specify city and sector for targeted regional data extraction.', icon: '🏢' },
-              { title: 'Metadata Sync', desc: 'Cross-referencing transit, health, and education infrastructure layers.', icon: '📡' },
-              { title: 'Score Computation', desc: 'Algorithmic weighting based on proximity and quality parameters.', icon: '🧠' },
+              { title: 'Locality Search', desc: 'Real-time search using Nominatim OpenStreetMap API for specific Noida sectors.', icon: '🏢' },
+              { title: 'Landmark Filtering', desc: 'Filtering system for prominent Hospitals, Malls, and Educational Institutes.', icon: '📡' },
+              { title: 'Score Computation', desc: 'Weighted scoring logic across connectivity, healthcare, and employment hub proximity.', icon: '🧠' },
             ].map((item, i) => (
               <div key={i} className="group">
                 <div className="w-24 h-24 bg-slate-50 rounded-[32px] flex items-center justify-center text-4xl mx-auto mb-8 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-500 shadow-sm">{item.icon}</div>
@@ -324,8 +412,8 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="mt-16 pt-8 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
-            <p className="text-slate-400 text-xs">© 2024 RealEstate MPF. Demo Version.</p>
-            <span className="px-5 py-1.5 bg-slate-200 text-slate-500 text-[10px] font-black rounded-full uppercase tracking-widest">MVP Preview 1.0.5</span>
+            <p className="text-slate-400 text-xs">© 2024 RealEstate MPF. Demo Version with OpenStreetMap API Integration.</p>
+            <span className="px-5 py-1.5 bg-slate-200 text-slate-500 text-[10px] font-black rounded-full uppercase tracking-widest">Live Landmarks Beta</span>
           </div>
         </div>
       </footer>
