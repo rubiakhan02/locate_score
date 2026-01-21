@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React from 'https://esm.sh/react@19.2.3';
 
 const Header: React.FC = () => {
   return (

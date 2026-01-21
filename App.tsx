@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'https://esm.sh/react@19.2.3';
 import Header from './components/Header';
 import ScoreMeter from './components/ScoreMeter';
 import { NOIDA_SECTORS, USE_CASES } from './data/mockData';
